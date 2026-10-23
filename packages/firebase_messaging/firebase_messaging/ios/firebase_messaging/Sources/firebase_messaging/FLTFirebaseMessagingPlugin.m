@@ -34,6 +34,9 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   // Used to track if everything as been initialized before answering
   // to the initialNotification request
   BOOL _initialNotificationGathered;
+#if !TARGET_OS_OSX
+  BOOL _notificationHandlingSetup;
+#endif
   FLTFirebaseMethodCallResult *_initialNotificationResult;
 
   NSString *_initialNotificationID;
@@ -89,6 +92,14 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   [registrar addMethodCallDelegate:instance channel:channel];
 #if !TARGET_OS_OSX
   [registrar publish:instance];  // iOS only supported
+  if (@available(iOS 13.0, *)) {
+    if ([registrar respondsToSelector:@selector(addSceneDelegate:)]) {
+      [registrar performSelector:@selector(addSceneDelegate:) withObject:instance];
+    }
+    if ([UIApplication sharedApplication].connectedScenes.count > 0) {
+      [instance setupNotificationHandlingWithRemoteNotification:nil];
+    }
+  }
 #endif
 }
 
@@ -219,6 +230,10 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSDictionary *remoteNotification =
       notification.userInfo[UIApplicationLaunchOptionsRemoteNotificationKey];
 #endif
+  [self setupNotificationHandlingWithRemoteNotification:remoteNotification];
+}
+
+- (void)setupNotificationHandlingWithRemoteNotification:(nullable NSDictionary *)remoteNotification {
   if (remoteNotification != nil) {
     // If remoteNotification exists, it is the notification that opened the app.
     _initialNotification =
@@ -227,6 +242,13 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   }
   _initialNotificationGathered = YES;
   [self initialNotificationCallback];
+
+#if !TARGET_OS_OSX
+  if (_notificationHandlingSetup) {
+    return;
+  }
+  _notificationHandlingSetup = YES;
+#endif
 
   [GULAppDelegateSwizzler registerAppDelegateInterceptor:self];
   [GULAppDelegateSwizzler proxyOriginalDelegateIncludingAPNSMethods];
@@ -308,6 +330,20 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   [[UIApplication sharedApplication] registerForRemoteNotifications];
 #endif
 }
+
+#if !TARGET_OS_OSX
+- (BOOL)scene:(UIScene *)scene
+    willConnectToSession:(UISceneSession *)session
+                 options:(UISceneConnectionOptions *)connectionOptions {
+  NSDictionary *remoteNotification =
+      connectionOptions.notificationResponse.notification.request.content.userInfo;
+  if (remoteNotification != nil) {
+    _notificationOpenedAppID = remoteNotification[@"gcm.message_id"];
+  }
+  [self setupNotificationHandlingWithRemoteNotification:remoteNotification];
+  return NO;
+}
+#endif
 
 #pragma mark - UNUserNotificationCenter Delegate Methods
 
